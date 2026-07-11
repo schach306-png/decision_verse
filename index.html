@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DecisionVerse — The Flight Simulator for Founders</title>
+  <!-- Google Fonts: Outfit (headings) and Plus Jakarta Sans (body) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- 1. LANDING PAGE SCREEN -->
+  <div id="landing-screen" class="screen active">
+    <header class="navbar">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span>DecisionVerse</span>
+      </div>
+      <div class="nav-links">
+        <span class="badge">National Hackathon Edition</span>
+      </div>
+    </header>
+
+    <main class="hero-container">
+      <div class="hero-badge">FLIGHT SIMULATOR FOR FOUNDERS</div>
+      <h1>Build your startup before you build it in real life.</h1>
+      <p class="hero-subtext">
+        90% of first-time founders fail due to poor financial literacy. DecisionVerse creates a living digital twin of your startup, allowing you to test decisions and run what-if scenarios in a simulated market economy.
+      </p>
+
+      <div class="input-card">
+        <label for="startup-concept">Enter your startup idea to begin:</label>
+        <div class="input-row">
+          <input type="text" id="startup-concept" placeholder="e.g., An AI-powered tutoring platform for Class 10 students..." />
+          <button id="btn-launch" class="btn-primary">
+            <span>Launch Simulation</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="social-proof">
+        <span>Aesthetic Inspired by Upmetrics</span>
+        <span class="dot">•</span>
+        <span>Deterministic Financial Modeling</span>
+        <span class="dot">•</span>
+        <span>Multi-Agent AI Debate Room</span>
+      </div>
+    </main>
+  </div>
+
+  <!-- 2. LOADING SCREEN -->
+  <div id="loading-screen" class="screen">
+    <div class="loader-content">
+      <div class="spinner">
+        <div class="double-bounce1"></div>
+        <div class="double-bounce2"></div>
+      </div>
+      <h2>Instantiating Digital Twin...</h2>
+      <div id="loader-steps">
+        <div class="loader-step active" id="step-1">Initializing startup state variables...</div>
+        <div class="loader-step" id="step-2">Configuring macroeconomy & industry benchmarks...</div>
+        <div class="loader-step" id="step-3">Seeding customer cohort profiles...</div>
+        <div class="loader-step" id="step-4">Assembling the AI Board of Directors...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. MAIN DASHBOARD SCREEN -->
+  <div id="dashboard-screen" class="screen">
+    <!-- Dashboard Navbar -->
+    <header class="navbar dash-nav">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span>DecisionVerse <span class="version-tag">v1.0</span></span>
+      </div>
+      <div class="startup-info">
+        <span class="startup-name-label">Startup:</span>
+        <span id="display-startup-name" class="startup-name">AI Tutor Co.</span>
+      </div>
+      <div class="nav-actions">
+        <span id="current-month-display" class="month-pill">Month 1</span>
+        <button id="btn-restart" class="btn-secondary">Restart</button>
+      </div>
+    </header>
+
+    <!-- Main Workspace Grid -->
+    <div class="workspace-grid">
+      
+      <!-- LEFT SECTION: BOARDROOM & CONTROLS -->
+      <section class="left-panel">
+        
+        <!-- Interactive Dilemma Panel -->
+        <div class="card dilemma-card">
+          <div class="card-header">
+            <h3>Monthly Dilemma</h3>
+            <span class="card-sub">Choose your direction</span>
+          </div>
+          <div class="card-body">
+            <h4 id="dilemma-title">Loading next decision...</h4>
+            <p id="dilemma-description">Waiting for the engine to generate the scenario.</p>
+            <div class="dilemma-options">
+              <button id="btn-option-yes" class="btn-choice yes">
+                <span class="choice-title">YES</span>
+                <span id="yes-preview" class="choice-preview">Hire two engineers (+$15,000 / mo fixed costs).</span>
+              </button>
+              <button id="btn-option-no" class="btn-choice no">
+                <span class="choice-title">NO</span>
+                <span id="no-preview" class="choice-preview">Maintain current development speed.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Boardroom (Chat Feed) -->
+        <div class="card boardroom-card">
+          <div class="card-header">
+            <div class="header-main">
+              <h3>AI Board of Directors</h3>
+              <span class="live-indicator"><span class="pulse-dot"></span>Debating Live</span>
+            </div>
+            <span class="card-sub">Reflecting turn metrics & benchmarks</span>
+          </div>
+          <div class="card-body boardroom-chat" id="boardroom-chat-feed">
+            <!-- Messages populated dynamically -->
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT SECTION: METRICS & VISUALIZATIONS -->
+      <section class="right-panel">
+        
+        <!-- Metrics Grid (Top row) -->
+        <div class="metrics-grid">
+          <!-- Cash Card -->
+          <div class="card metric-card">
+            <div class="metric-icon cash-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                <circle cx="12" cy="12" r="2"></circle>
+                <path d="M6 12h.01M18 12h.01"></path>
+              </svg>
+            </div>
+            <div class="metric-info">
+              <span class="metric-label">Cash Balance</span>
+              <h2 id="metric-cash">$100,000</h2>
+              <span id="delta-cash" class="metric-delta positive">+$0.00</span>
+            </div>
+          </div>
+
+          <!-- MRR Card -->
+          <div class="card metric-card">
+            <div class="metric-icon mrr-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="20" x2="18" y2="10"></line>
+                <line x1="12" y1="20" x2="12" y2="4"></line>
+                <line x1="6" y1="20" x2="6" y2="14"></line>
+              </svg>
+            </div>
+            <div class="metric-info">
+              <span class="metric-label">Monthly Revenue</span>
+              <h2 id="metric-mrr">$10,000</h2>
+              <span id="delta-mrr" class="metric-delta">+$0.00</span>
+            </div>
+          </div>
+
+          <!-- Runway Card -->
+          <div class="card metric-card">
+            <div class="metric-icon runway-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+            </div>
+            <div class="metric-info">
+              <span class="metric-label">Runway Remaining</span>
+              <h2 id="metric-runway">10.0 months</h2>
+              <div class="runway-gauge-container">
+                <div class="runway-gauge-bar" id="runway-bar" style="width: 100%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Customers Card -->
+          <div class="card metric-card">
+            <div class="metric-icon customers-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+            </div>
+            <div class="metric-info">
+              <span class="metric-label">Active Customers</span>
+              <h2 id="metric-customers">500</h2>
+              <span id="delta-customers" class="metric-delta">+$0</span>
+            </div>
+          </div>
+
+          <!-- CAC Card -->
+          <div class="card metric-card">
+            <div class="metric-icon cac-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+              </svg>
+            </div>
+            <div class="metric-info">
+              <span class="metric-label">CAC (vs Sector Med.)</span>
+              <h2 id="metric-cac">$50</h2>
+              <span id="metric-cac-benchmark" class="benchmark-label">Sector Median: $60</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- The Charting Engine -->
+        <div class="card chart-card">
+          <div class="card-header chart-header-row">
+            <div>
+              <h3>Performance Trajectory</h3>
+              <span class="card-sub">Dynamic projection tracking cash vs. revenue</span>
+            </div>
+            <div class="chart-legend">
+              <span class="legend-item"><span class="legend-dot cash-dot"></span>Cash</span>
+              <span class="legend-item"><span class="legend-dot mrr-dot"></span>Monthly Revenue</span>
+            </div>
+          </div>
+          <div class="card-body chart-body-container">
+            <div class="chart-grid-layout">
+              <div class="chart-wrapper">
+                <!-- Inline SVG graph for fully custom, high-performance vectors without third-party chart package overhead -->
+                <svg id="trajectory-chart" viewBox="0 0 600 240" preserveAspectRatio="none">
+                  <!-- Grid Lines -->
+                  <line x1="0" y1="40" x2="600" y2="40" class="grid-line" />
+                  <line x1="0" y1="90" x2="600" y2="90" class="grid-line" />
+                  <line x1="0" y1="140" x2="600" y2="140" class="grid-line" />
+                  <line x1="0" y1="190" x2="600" y2="190" class="grid-line" />
+                  
+                  <!-- Zero Line -->
+                  <line x1="0" y1="190" x2="600" y2="190" stroke="#0F0B1C" stroke-width="1" stroke-dasharray="2 2" />
+
+                  <!-- Historical Paths (Solid) -->
+                  <path id="path-cash" d="" fill="none" stroke="#2563EB" stroke-width="3" stroke-linecap="round"></path>
+                  <path id="path-mrr" d="" fill="none" stroke="#10B981" stroke-width="3" stroke-linecap="round"></path>
+
+                  <!-- Projected Paths (Dashed) -->
+                  <path id="path-cash-proj" d="" fill="none" stroke="#2563EB" stroke-width="2.5" stroke-dasharray="4 4" stroke-linecap="round" opacity="0.65"></path>
+                  <path id="path-mrr-proj" d="" fill="none" stroke="#10B981" stroke-width="2.5" stroke-dasharray="4 4" stroke-linecap="round" opacity="0.65"></path>
+                  
+                  <!-- Tooltip indicators -->
+                  <g id="chart-dots"></g>
+                </svg>
+                <!-- X Axis month markings -->
+                <div class="chart-x-axis" id="chart-x-axis-labels">
+                  <span>Month 1</span>
+                  <span>Month 2</span>
+                  <span>Month 3</span>
+                  <span>Month 4</span>
+                  <span>Month 5</span>
+                  <span>Month 6</span>
+                </div>
+              </div>
+
+              <!-- Financial Vitals Sidebar -->
+              <div class="vitals-sidebar">
+                <div class="vitals-title">FINANCIAL HEALTH DIAGNOSTICS</div>
+                
+                <div class="vital-item">
+                  <div class="vital-header">
+                    <span>LTV : CAC Ratio</span>
+                    <span id="vital-ltv-cac-badge" class="vital-badge badge-green">N/A</span>
+                  </div>
+                  <div class="vital-value" id="vital-ltv-cac-val">0.0x</div>
+                  <div class="vital-desc">Target > 3.0x for SaaS viability.</div>
+                </div>
+
+                <div class="vital-item">
+                  <div class="vital-header">
+                    <span>Net Profit Margin</span>
+                    <span id="vital-margin-badge" class="vital-badge badge-orange">0%</span>
+                  </div>
+                  <div class="vital-progress-container">
+                    <div class="vital-progress-bar" id="vital-margin-bar" style="width: 0%;"></div>
+                  </div>
+                  <div class="vital-desc">Current percentage of revenue kept as profit.</div>
+                </div>
+
+                <div class="vital-item">
+                  <div class="vital-header">
+                    <span>Capital Burn Efficiency</span>
+                    <span id="vital-efficiency-badge" class="vital-badge">Moderate</span>
+                  </div>
+                  <div class="vital-desc" id="vital-efficiency-desc">Evaluate net burn multipliers vs growth.</div>
+                </div>
+
+                <div class="vital-item">
+                  <div class="vital-header">
+                    <span>Break-Even Progress</span>
+                    <span id="vital-breakeven-pct">0%</span>
+                  </div>
+                  <div class="vital-progress-container">
+                    <div class="vital-progress-bar bg-blue" id="vital-breakeven-bar" style="width: 0%;"></div>
+                  </div>
+                  <div class="vital-desc" id="vital-breakeven-desc">MRR covering operating expenses.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- BOTTOM PANEL: WHAT-IF ENGINE -->
+    <footer class="what-if-dock">
+      <div class="what-if-container">
+        <div class="what-if-label">
+          <span class="sparkle-icon">✦</span>
+          <strong>WHAT-IF ENGINE:</strong>
+        </div>
+        <div class="what-if-input-wrapper">
+          <input type="text" id="what-if-input" placeholder="Type a scenario... (e.g., 'Google launches competitor', 'We double pricing', 'A massive recession starts')" />
+          <button id="btn-what-if-submit" class="btn-primary btn-run-scenario">Run Scenario</button>
+        </div>
+        <div class="quick-scenarios">
+          <span class="quick-label">Presets:</span>
+          <button class="btn-preset" data-scenario="Recession begins and investors tighten capital">Recession</button>
+          <button class="btn-preset" data-scenario="Our product goes viral on social media, servers spike">Viral Explode</button>
+          <button class="btn-preset" data-scenario="Google enters the market with a similar free tool">Google Entry</button>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Fallback Screen Toast (visible for secret demo shortcut trigger notification) -->
+  <div id="demo-indicator" class="demo-badge">
+    <div class="pulse-dot-red"></div>
+    <span>Fallback Scenario Mode Enabled (Ctrl + Shift + D)</span>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
