@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
 const path = require('path');
 const fs = require('fs');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,14 +20,38 @@ app.use(cookieSession({
   maxAge: 24 * 60 * 60 * 1000 // 24 hours
 }));
 
-// JSON File Database configuration
+// --- DATABASE HYBRID LAYER ---
+const usePostgres = !!process.env.DATABASE_URL;
+let pgPool = null;
+
+if (usePostgres) {
+  console.log("DATABASE_URL detected. Configuring Cloud Postgres connection...");
+  pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: false // Required for serverless Neon/Supabase connections
+    }
+  });
+
+  // Test connection & initialize tables
+  pgPool.query('SELECT NOW()', (err, res) => {
+    if (err) {
+      console.error('Cloud Postgres Connection Error:', err.message);
+    } else {
+      console.log('Successfully connected to Production Cloud Postgres Database.');
+      initializePostgresTables();
+    }
+  });
+} else {
+  console.log("No DATABASE_URL detected. Using local JSON File Database.");
+}
+
+// Local JSON File Database configuration
 const dbFile = path.join(__dirname, '../database.json');
 
-// Helper functions to read/write JSON database file
-function readDb() {
+function readLocalDb() {
   try {
     if (!fs.existsSync(dbFile)) {
-      // Initialize with empty tables
       const initialData = { users: [], ideas: [] };
       fs.writeFileSync(dbFile, JSON.stringify(initialData, null, 2), 'utf8');
       return initialData;
@@ -39,12 +64,36 @@ function readDb() {
   }
 }
 
-function writeDb(data) {
+function writeLocalDb(data) {
   try {
     fs.writeFileSync(dbFile, JSON.stringify(data, null, 2), 'utf8');
   } catch (err) {
     console.error('Error writing to JSON database:', err);
   }
+}
+
+function initializePostgresTables() {
+  const createUsersTable = `
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(255) UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL
+    );
+  `;
+  const createIdeasTable = `
+    CREATE TABLE IF NOT EXISTS ideas (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      encrypted_payload TEXT NOT NULL,
+      iv VARCHAR(255) NOT NULL,
+      salt VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+  pgPool.query(createUsersTable)
+    .then(() => pgPool.query(createIdeasTable))
+    .then(() => console.log('PostgreSQL database tables verified.'))
+    .catch(err => console.error('Error creating Postgres tables:', err.message));
 }
 
 // --- Middleware: Require Auth ---
@@ -60,12 +109,19 @@ function requireAuth(req, res, next) {
 // 1. Check Session State
 app.get('/api/me', (req, res) => {
   if (req.session && req.session.userId) {
-    const db = readDb();
-    const user = db.users.find(u => u.id === req.session.userId);
-    if (!user) {
-      return res.json({ loggedIn: false });
+    if (usePostgres) {
+      pgPool.query('SELECT username FROM users WHERE id = $1', [req.session.userId], (err, result) => {
+        if (err || result.rows.length === 0) {
+          return res.json({ loggedIn: false });
+        }
+        res.json({ loggedIn: true, username: result.rows[0].username });
+      });
+    } else {
+      const db = readLocalDb();
+      const user = db.users.find(u => u.id === req.session.userId);
+      if (!user) return res.json({ loggedIn: false });
+      res.json({ loggedIn: true, username: user.username });
     }
-    res.json({ loggedIn: true, username: user.username });
   } else {
     res.json({ loggedIn: false });
   }
@@ -79,32 +135,45 @@ app.post('/api/signup', (req, res) => {
     return res.status(400).json({ error: 'Username and auth credentials required' });
   }
 
-  const db = readDb();
-  
-  // Check if username already exists
-  const existingUser = db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
-  if (existingUser) {
-    return res.status(400).json({ error: 'Username already exists' });
-  }
-
-  // Hash the incoming authHash (derived client-side) on server-side for double security
   bcrypt.hash(authHash, 10, (err, hash) => {
     if (err) {
       return res.status(500).json({ error: 'Internal server error during hashing' });
     }
 
-    const newUser = {
-      id: db.users.length + 1,
-      username: username,
-      password_hash: hash
-    };
+    if (usePostgres) {
+      pgPool.query(
+        'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id',
+        [username, hash],
+        (err, result) => {
+          if (err) {
+            if (err.message.includes('unique constraint') || err.message.includes('duplicate key')) {
+              return res.status(400).json({ error: 'Username already exists' });
+            }
+            return res.status(500).json({ error: 'Database error registering user' });
+          }
+          req.session.userId = result.rows[0].id;
+          res.json({ success: true, username });
+        }
+      );
+    } else {
+      const db = readLocalDb();
+      const existingUser = db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+      if (existingUser) {
+        return res.status(400).json({ error: 'Username already exists' });
+      }
 
-    db.users.push(newUser);
-    writeDb(db);
+      const newUser = {
+        id: db.users.length + 1,
+        username: username,
+        password_hash: hash
+      };
 
-    // Log the user in immediately
-    req.session.userId = newUser.id;
-    res.json({ success: true, username });
+      db.users.push(newUser);
+      writeLocalDb(db);
+
+      req.session.userId = newUser.id;
+      res.json({ success: true, username });
+    }
   });
 });
 
@@ -116,21 +185,39 @@ app.post('/api/login', (req, res) => {
     return res.status(400).json({ error: 'Username and credentials required' });
   }
 
-  const db = readDb();
-  const user = db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
-  
-  if (!user) {
-    return res.status(400).json({ error: 'Invalid username or password' });
-  }
+  if (usePostgres) {
+    pgPool.query('SELECT id, password_hash FROM users WHERE username = $1', [username], (err, result) => {
+      if (err || result.rows.length === 0) {
+        return res.status(400).json({ error: 'Invalid username or password' });
+      }
 
-  bcrypt.compare(authHash, user.password_hash, (err, matches) => {
-    if (err || !matches) {
+      const user = result.rows[0];
+      bcrypt.compare(authHash, user.password_hash, (err, matches) => {
+        if (err || !matches) {
+          return res.status(400).json({ error: 'Invalid username or password' });
+        }
+
+        req.session.userId = user.id;
+        res.json({ success: true, username });
+      });
+    });
+  } else {
+    const db = readLocalDb();
+    const user = db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    
+    if (!user) {
       return res.status(400).json({ error: 'Invalid username or password' });
     }
 
-    req.session.userId = user.id;
-    res.json({ success: true, username });
-  });
+    bcrypt.compare(authHash, user.password_hash, (err, matches) => {
+      if (err || !matches) {
+        return res.status(400).json({ error: 'Invalid username or password' });
+      }
+
+      req.session.userId = user.id;
+      res.json({ success: true, username });
+    });
+  }
 });
 
 // 4. Logout
@@ -147,38 +234,77 @@ app.post('/api/ideas', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Encrypted payload, iv, and salt are required' });
   }
 
-  const db = readDb();
-  
-  const newIdea = {
-    id: db.ideas.length + 1,
-    user_id: req.session.userId,
-    encrypted_payload: encrypted_payload,
-    iv: iv,
-    salt: salt,
-    created_at: new Date().toISOString()
-  };
+  if (usePostgres) {
+    pgPool.query(
+      'INSERT INTO ideas (user_id, encrypted_payload, iv, salt) VALUES ($1, $2, $3, $4) RETURNING id',
+      [req.session.userId, encrypted_payload, iv, salt],
+      (err, result) => {
+        if (err) {
+          return res.status(500).json({ error: 'Failed to save encrypted idea' });
+        }
+        res.json({ success: true, id: result.rows[0].id });
+      }
+    );
+  } else {
+    const db = readLocalDb();
+    const newIdea = {
+      id: db.ideas.length + 1,
+      user_id: req.session.userId,
+      encrypted_payload: encrypted_payload,
+      iv: iv,
+      salt: salt,
+      created_at: new Date().toISOString()
+    };
 
-  db.ideas.push(newIdea);
-  writeDb(db);
+    db.ideas.push(newIdea);
+    writeLocalDb(db);
 
-  res.json({ success: true, id: newIdea.id });
+    res.json({ success: true, id: newIdea.id });
+  }
 });
 
 // 6. Fetch Encrypted Ideas for logged-in user
 app.get('/api/ideas', requireAuth, (req, res) => {
-  const db = readDb();
-  const userIdeas = db.ideas
-    .filter(i => i.user_id === req.session.userId)
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-  res.json(userIdeas);
+  if (usePostgres) {
+    pgPool.query(
+      'SELECT id, encrypted_payload, iv, salt, created_at FROM ideas WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.session.userId],
+      (err, result) => {
+        if (err) {
+          return res.status(500).json({ error: 'Failed to fetch encrypted ideas' });
+        }
+        res.json(result.rows);
+      }
+    );
+  } else {
+    const db = readLocalDb();
+    const userIdeas = db.ideas
+      .filter(i => i.user_id === req.session.userId)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      
+    res.json(userIdeas);
+  }
 });
 
 // Database Inspector Endpoint (for Hackathon Demo Verification)
-app.get('/admin/db', (req, res) => {
-  const db = readDb();
-  const users = db.users || [];
-  const ideas = db.ideas || [];
+app.get('/admin/db', async (req, res) => {
+  let users = [];
+  let ideas = [];
+
+  try {
+    if (usePostgres) {
+      const usersRes = await pgPool.query('SELECT id, username, password_hash FROM users');
+      const ideasRes = await pgPool.query('SELECT id, user_id, encrypted_payload, iv, salt, created_at FROM ideas');
+      users = usersRes.rows;
+      ideas = ideasRes.rows;
+    } else {
+      const db = readLocalDb();
+      users = db.users || [];
+      ideas = db.ideas || [];
+    }
+  } catch (err) {
+    console.error('Error fetching inspector records:', err);
+  }
   
   // Generate a simple, beautiful HTML page
   let html = `
@@ -205,7 +331,7 @@ app.get('/admin/db', (req, res) => {
     </head>
     <body>
       <a href="/" class="nav-link">← Back to Simulator</a>
-      <h1>Zero-Knowledge Database Inspector</h1>
+      <h1>Zero-Knowledge Database Inspector (${usePostgres ? 'Cloud Postgres Mode' : 'Local File Mode'})</h1>
       <p>This panel displays the raw database records stored on the server. Notice that all user passwords and startup ideas are fully encrypted/hashed before they hit the database.</p>
       
       <div class="table-container">
