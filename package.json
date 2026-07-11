@@ -2,9 +2,9 @@
   "name": "decisionverse",
   "version": "1.0.0",
   "description": "Flight Simulator for Founders with client-side zero-knowledge encryption and SQLite storage",
-  "main": "server.js",
+  "main": "api/index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node api/index.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

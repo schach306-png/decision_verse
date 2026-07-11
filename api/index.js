@@ -19,8 +19,8 @@ app.use(cookieSession({
   maxAge: 24 * 60 * 60 * 1000 // 24 hours
 }));
 
-// Initialize Database
-const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) => {
+// Initialize Database (at root directory, one level up from api/)
+const db = new sqlite3.Database(path.join(__dirname, '../database.sqlite'), (err) => {
   if (err) {
     console.error('Error opening SQLite database:', err.message);
   } else {
@@ -260,12 +260,12 @@ app.get('/admin/db', (req, res) => {
   });
 });
 
-// Serve frontend static assets from project directory
-app.use(express.static(__dirname));
+// Serve frontend static assets from parent project directory (running locally)
+app.use(express.static(path.join(__dirname, '../')));
 
 // Direct fallback to index.html for clients
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, '../index.html'));
 });
 
 app.listen(PORT, () => {
