@@ -1,6 +1,7 @@
 // ==========================================
 // DECISIONVERSE CORE ENGINE
 // Deterministic Math + Semantic Multi-Agent Debate
+// Zero-Knowledge Web Crypto Authentication & Storage
 // ==========================================
 
 // --- State Variables ---
@@ -17,6 +18,11 @@ let state = {
   history: [], // Elements: { month, cash, mrr }
   decisionHistory: [] // Array of 'YES' or 'NO' values for bias detection
 };
+
+// Global variables for auth and encryption keys
+let activeEncryptionKey = null;
+let currentUsername = "";
+let authMode = "login"; // "login" or "signup"
 
 // Sector Benchmarks (SaaS Sector reference)
 const BENCHMARKS = {
@@ -122,7 +128,7 @@ const DEMO_STEPS = [
 // --- Initialization & Navigation Functions ---
 window.addEventListener("DOMContentLoaded", () => {
   setupEventListeners();
-  // Set up chart size responsiveness
+  checkSessionState();
   window.addEventListener("resize", drawChart);
 });
 
@@ -164,6 +170,397 @@ function setupEventListeners() {
       activateDemoMode();
     }
   });
+
+  // --- Login / Signup Modal Event Listeners ---
+  document.getElementById("btn-show-login").addEventListener("click", () => showAuthModal("login"));
+  document.getElementById("btn-show-signup").addEventListener("click", () => showAuthModal("signup"));
+  document.getElementById("btn-close-auth").addEventListener("click", hideAuthModal);
+  document.getElementById("auth-toggle-link").addEventListener("click", toggleAuthMode);
+  document.getElementById("btn-auth-submit").addEventListener("click", handleAuthSubmit);
+  document.getElementById("btn-logout").addEventListener("click", handleLogout);
+
+  // --- Save Modal Event Listeners ---
+  document.getElementById("btn-show-save").addEventListener("click", showSaveModal);
+  document.getElementById("btn-close-save").addEventListener("click", hideSaveModal);
+  document.getElementById("btn-save-submit").addEventListener("click", handleSaveStateSubmit);
+}
+
+// --- Zero-Knowledge Cryptography (Web Crypto API AES-256-GCM) ---
+
+// Derives Auth Hash (to verify session) and AES Key (to encrypt/decrypt locally)
+async function deriveSecrets(username, password) {
+  const encoder = new TextEncoder();
+  const salt = encoder.encode(username.toLowerCase()); // Unique salt per username
+  
+  // Import raw password bytes
+  const baseKey = await window.crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits", "deriveKey"]
+  );
+
+  // Derive bits from PBKDF2
+  const derivedBits = await window.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    baseKey,
+    512 // 512 bits = 64 bytes
+  );
+
+  const aesBytes = derivedBits.slice(0, 32); // First 32 bytes for AES
+  const authHashBytes = derivedBits.slice(32, 64); // Last 32 bytes for server validation
+
+  // Format authHash as hex string for transportation
+  const authHashHex = Array.from(new Uint8Array(authHashBytes))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  // Import AES GCM key
+  const aesKey = await window.crypto.subtle.importKey(
+    "raw",
+    aesBytes,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+
+  return { aesKey, authHashHex };
+}
+
+// Encrypt plaintext string into ciphertext hex and IV hex
+async function encryptData(plaintext, key) {
+  const encoder = new TextEncoder();
+  const iv = window.crypto.getRandomValues(new Uint8Array(12)); // 12-byte standard GCM IV
+
+  const cipherBuffer = await window.crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv: iv
+    },
+    key,
+    encoder.encode(plaintext)
+  );
+
+  const ciphertextHex = Array.from(new Uint8Array(cipherBuffer))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  const ivHex = Array.from(iv)
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  return { ciphertextHex, ivHex };
+}
+
+// Decrypt ciphertext hex back into plaintext string
+async function decryptData(ciphertextHex, ivHex, key) {
+  const decoder = new TextDecoder();
+  const ciphertextBytes = new Uint8Array(
+    ciphertextHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
+  );
+  const ivBytes = new Uint8Array(
+    ivHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
+  );
+
+  const plaintextBuffer = await window.crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: ivBytes
+    },
+    key,
+    ciphertextBytes
+  );
+
+  return decoder.decode(plaintextBuffer);
+}
+
+// --- Session & Database API Triggers ---
+
+async function checkSessionState() {
+  try {
+    const res = await fetch("/api/me");
+    const data = await res.json();
+    
+    if (data.loggedIn) {
+      currentUsername = data.username;
+      updateAuthUI(true);
+      // Retrieve the cached password to derive keys if they refreshed
+      // In a strict browser memory environment, if they refresh they must input password again to decrypt,
+      // which is a good secure UX indicator. We prompt them to sign in to fetch their twins.
+    } else {
+      updateAuthUI(false);
+    }
+  } catch (err) {
+    console.error("Auth state check failed:", err);
+  }
+}
+
+function updateAuthUI(loggedIn) {
+  const authSec = document.getElementById("nav-auth-section");
+  const userSec = document.getElementById("nav-user-section");
+  const saveBtn = document.getElementById("btn-show-save");
+  const savedContainer = document.getElementById("saved-ideas-container");
+
+  if (loggedIn) {
+    authSec.style.display = "none";
+    userSec.style.display = "flex";
+    document.getElementById("nav-username").textContent = currentUsername;
+    saveBtn.style.display = "inline-block";
+    
+    if (activeEncryptionKey) {
+      savedContainer.style.display = "block";
+      fetchAndDecryptIdeas();
+    } else {
+      savedContainer.style.display = "none";
+    }
+  } else {
+    authSec.style.display = "flex";
+    userSec.style.display = "none";
+    saveBtn.style.display = "none";
+    savedContainer.style.display = "none";
+    activeEncryptionKey = null;
+    currentUsername = "";
+  }
+}
+
+function showAuthModal(mode) {
+  authMode = mode;
+  const modal = document.getElementById("auth-modal");
+  const title = document.getElementById("auth-modal-title");
+  const submit = document.getElementById("btn-auth-submit");
+  const toggleText = document.getElementById("auth-toggle-text");
+  const toggleLink = document.getElementById("auth-toggle-link");
+  const error = document.getElementById("auth-error-msg");
+
+  error.style.display = "none";
+  document.getElementById("auth-username").value = "";
+  document.getElementById("auth-password").value = "";
+
+  if (mode === "login") {
+    title.textContent = "Sign In";
+    submit.textContent = "Sign In";
+    toggleText.textContent = "Don't have an account?";
+    toggleLink.textContent = "Sign Up";
+  } else {
+    title.textContent = "Create Account";
+    submit.textContent = "Sign Up";
+    toggleText.textContent = "Already have an account?";
+    toggleLink.textContent = "Sign In";
+  }
+
+  modal.style.display = "flex";
+}
+
+function hideAuthModal() {
+  document.getElementById("auth-modal").style.display = "none";
+}
+
+function toggleAuthMode(e) {
+  e.preventDefault();
+  showAuthModal(authMode === "login" ? "signup" : "login");
+}
+
+async function handleAuthSubmit() {
+  const username = document.getElementById("auth-username").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const errorEl = document.getElementById("auth-error-msg");
+
+  if (!username || !password) {
+    errorEl.textContent = "All fields are required.";
+    errorEl.style.display = "block";
+    return;
+  }
+
+  errorEl.style.display = "none";
+
+  try {
+    // Zero-knowledge key derivation in client memory
+    const { aesKey, authHashHex } = await deriveSecrets(username, password);
+
+    const url = authMode === "login" ? "/api/login" : "/api/signup";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, authHash: authHashHex })
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      activeEncryptionKey = aesKey;
+      currentUsername = username;
+      hideAuthModal();
+      updateAuthUI(true);
+    } else {
+      errorEl.textContent = data.error || "Authentication failed.";
+      errorEl.style.display = "block";
+    }
+  } catch (err) {
+    console.error("Authentication error:", err);
+    errorEl.textContent = "Crypto error: Key derivation failed.";
+    errorEl.style.display = "block";
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch("/api/logout", { method: "POST" });
+    updateAuthUI(false);
+    resetSimulation();
+  } catch (err) {
+    console.error("Logout failed:", err);
+  }
+}
+
+// --- Saving State Dialog Modals ---
+
+function showSaveModal() {
+  if (!activeEncryptionKey) {
+    alert("You must log in to save your simulation states.");
+    return;
+  }
+  document.getElementById("save-idea-name").value = state.startupName;
+  document.getElementById("save-modal").style.display = "flex";
+}
+
+function hideSaveModal() {
+  document.getElementById("save-modal").style.display = "none";
+}
+
+async function handleSaveStateSubmit() {
+  const label = document.getElementById("save-idea-name").value.trim();
+  if (!label) {
+    alert("Please provide a name label.");
+    return;
+  }
+
+  try {
+    // Prepare the payload (state, parameters, history log)
+    const payload = JSON.stringify({
+      labelName: label,
+      state: state
+    });
+
+    // Encrypt client-side
+    const { ciphertextHex, ivHex } = await encryptData(payload, activeEncryptionKey);
+
+    const res = await fetch("/api/ideas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        encrypted_payload: ciphertextHex,
+        iv: ivHex,
+        salt: currentUsername.toLowerCase() // Unique salt reference for display
+      })
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success) {
+      hideSaveModal();
+      fetchAndDecryptIdeas(); // Reload list on dashboard landing
+      alert("Simulation encrypted & stored successfully in database!");
+    } else {
+      alert("Error saving: " + data.error);
+    }
+  } catch (err) {
+    console.error("Save state error:", err);
+    alert("Encryption failed. Verify key bounds.");
+  }
+}
+
+// Fetch encrypted cards from database and decrypt locally
+async function fetchAndDecryptIdeas() {
+  const listTable = document.getElementById("ideas-list-table");
+  if (!activeEncryptionKey) return;
+
+  try {
+    const res = await fetch("/api/ideas");
+    if (!res.ok) throw new Error("Failed to fetch ideas");
+    const rows = await res.json();
+
+    listTable.innerHTML = "";
+    
+    if (rows.length === 0) {
+      listTable.innerHTML = `<span style="font-size:13px; color:var(--text-muted);">No saved simulation states found. Click 'Save State' inside the dashboard to secure one!</span>`;
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        // Decrypt on the fly using our memory AES key
+        const decryptedStr = await decryptData(row.encrypted_payload, row.iv, activeEncryptionKey);
+        const data = JSON.parse(decryptedStr);
+        
+        const card = document.createElement("div");
+        card.className = "saved-idea-row";
+        
+        const dateFormatted = new Date(row.created_at).toLocaleString();
+        
+        card.innerHTML = `
+          <div class="saved-idea-info">
+            <span class="saved-idea-name">${data.labelName}</span>
+            <span class="saved-idea-meta">Created: ${dateFormatted} | Month: ${data.state.month} | Cash: ${formatCurrency(data.state.cash)}</span>
+          </div>
+          <div class="saved-idea-actions">
+            <button class="btn-secondary btn-load-twin" style="padding: 6px 12px; font-size:12px; font-weight:600;">Decrypt & Launch</button>
+          </div>
+        `;
+        
+        card.querySelector(".btn-load-twin").addEventListener("click", () => {
+          loadStateIntoSimulator(data.state);
+        });
+
+        listTable.appendChild(card);
+      } catch (decErr) {
+        console.error("Error decrypting row id:", row.id, decErr);
+        // Show row as locked or scrambled (representing secure encryption state)
+        const card = document.createElement("div");
+        card.className = "saved-idea-row scrambled";
+        card.innerHTML = `
+          <div class="saved-idea-info">
+            <span class="saved-idea-name" style="font-family:monospace; color:var(--accent-red)">[CIPHERTEXT SCRUMBLED]</span>
+            <span class="saved-idea-meta">Raw bytes: ${row.encrypted_payload.substring(0, 32)}...</span>
+          </div>
+          <div class="saved-idea-actions">
+            <span class="vital-badge badge-red">Locked</span>
+          </div>
+        `;
+        listTable.appendChild(card);
+      }
+    }
+  } catch (err) {
+    console.error("Fetch saved ideas error:", err);
+    listTable.innerHTML = `<span style="color:var(--accent-red)">Failed to load. Verify database connection.</span>`;
+  }
+}
+
+function loadStateIntoSimulator(loadedState) {
+  // Overwrite state variables
+  state = { ...loadedState };
+
+  const landing = document.getElementById("landing-screen");
+  const dashboard = document.getElementById("dashboard-screen");
+
+  landing.classList.remove("active");
+  dashboard.classList.add("active");
+
+  document.getElementById("display-startup-name").textContent = state.startupName;
+  updateUIElements({ cash: 0, mrr: 0, customers: 0 });
+  loadDilemma();
+  
+  // Re-fill the boardroom chat with fresh state
+  const feed = document.getElementById("boardroom-chat-feed");
+  feed.innerHTML = "";
+  generateInitialBoardIntro();
+  addBoardroomMessage("SYSTEM", "SYS", "Simulated digital twin decrypted locally in browser and loaded successfully.", "neutral");
+  
+  drawChart();
 }
 
 function triggerLoadingScreen() {
@@ -200,12 +597,14 @@ function triggerLoadingScreen() {
 function initializeDashboard() {
   document.getElementById("display-startup-name").textContent = state.startupName;
   
-  // Record initial history
-  state.history = [{
-    month: state.month,
-    cash: state.cash,
-    mrr: calculateMRR()
-  }];
+  // Record initial history if empty
+  if (state.history.length === 0) {
+    state.history = [{
+      month: state.month,
+      cash: state.cash,
+      mrr: calculateMRR()
+    }];
+  }
 
   updateUIElements({ cash: 0, mrr: 0, customers: 0 });
   loadDilemma();
@@ -243,6 +642,9 @@ function resetSimulation() {
   }
   document.getElementById("step-1").classList.add("active");
   document.getElementById("startup-concept").value = "";
+
+  // Check auth session to populate saved lists if logged in
+  checkSessionState();
 }
 
 // --- Core Calculations (Math Engine) ---
