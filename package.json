@@ -1,7 +1,7 @@
 {
   "name": "decisionverse",
   "version": "1.0.0",
-  "description": "Flight Simulator for Founders with client-side zero-knowledge encryption and SQLite storage",
+  "description": "Flight Simulator for Founders with client-side zero-knowledge encryption and JSON storage",
   "main": "api/index.js",
   "scripts": {
     "start": "node api/index.js"
@@ -10,7 +10,6 @@
     "bcryptjs": "^2.4.3",
     "cookie-session": "^2.1.0",
     "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "sqlite3": "^5.1.7"
+    "express": "^4.19.2"
   }
 }
