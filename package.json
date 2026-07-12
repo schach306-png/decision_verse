@@ -1,16 +1,20 @@
 {
   "name": "decisionverse",
   "version": "1.0.0",
-  "description": "Flight Simulator for Founders with zero-knowledge encryption and hybrid local/cloud Postgres storage",
+  "description": "Flight Simulator for Founders with zero-knowledge encryption and Prisma ORM",
   "main": "api/index.js",
   "scripts": {
-    "start": "node api/index.js"
+    "start": "node api/index.js",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cookie-session": "^2.1.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "pg": "^8.11.5"
+    "@prisma/client": "^5.12.1"
+  },
+  "devDependencies": {
+    "prisma": "^5.12.1"
   }
 }

@@ -3,11 +3,11 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
 const path = require('path');
-const fs = require('fs');
-const { Pool } = require('pg');
+const { PrismaClient } = require('@prisma/client');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const prisma = new PrismaClient();
 
 // Enable CORS and JSON parsing
 app.use(cors());
@@ -20,82 +20,6 @@ app.use(cookieSession({
   maxAge: 24 * 60 * 60 * 1000 // 24 hours
 }));
 
-// --- DATABASE HYBRID LAYER ---
-const usePostgres = !!process.env.DATABASE_URL;
-let pgPool = null;
-
-if (usePostgres) {
-  console.log("DATABASE_URL detected. Configuring Cloud Postgres connection...");
-  pgPool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-      rejectUnauthorized: false // Required for serverless Neon/Supabase connections
-    }
-  });
-
-  // Test connection & initialize tables
-  pgPool.query('SELECT NOW()', (err, res) => {
-    if (err) {
-      console.error('Cloud Postgres Connection Error:', err.message);
-    } else {
-      console.log('Successfully connected to Production Cloud Postgres Database.');
-      initializePostgresTables();
-    }
-  });
-} else {
-  console.log("No DATABASE_URL detected. Using local JSON File Database.");
-}
-
-// Local JSON File Database configuration
-const dbFile = path.join(__dirname, '../database.json');
-
-function readLocalDb() {
-  try {
-    if (!fs.existsSync(dbFile)) {
-      const initialData = { users: [], ideas: [] };
-      fs.writeFileSync(dbFile, JSON.stringify(initialData, null, 2), 'utf8');
-      return initialData;
-    }
-    const raw = fs.readFileSync(dbFile, 'utf8');
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Error reading JSON database:', err);
-    return { users: [], ideas: [] };
-  }
-}
-
-function writeLocalDb(data) {
-  try {
-    fs.writeFileSync(dbFile, JSON.stringify(data, null, 2), 'utf8');
-  } catch (err) {
-    console.error('Error writing to JSON database:', err);
-  }
-}
-
-function initializePostgresTables() {
-  const createUsersTable = `
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username VARCHAR(255) UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL
-    );
-  `;
-  const createIdeasTable = `
-    CREATE TABLE IF NOT EXISTS ideas (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      encrypted_payload TEXT NOT NULL,
-      iv VARCHAR(255) NOT NULL,
-      salt VARCHAR(255) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `;
-  pgPool.query(createUsersTable)
-    .then(() => pgPool.query(createIdeasTable))
-    .then(() => console.log('PostgreSQL database tables verified.'))
-    .catch(err => console.error('Error creating Postgres tables:', err.message));
-}
-
 // --- Middleware: Require Auth ---
 function requireAuth(req, res, next) {
   if (!req.session || !req.session.userId) {
@@ -107,20 +31,19 @@ function requireAuth(req, res, next) {
 // --- API Endpoints ---
 
 // 1. Check Session State
-app.get('/api/me', (req, res) => {
+app.get('/api/me', async (req, res) => {
   if (req.session && req.session.userId) {
-    if (usePostgres) {
-      pgPool.query('SELECT username FROM users WHERE id = $1', [req.session.userId], (err, result) => {
-        if (err || result.rows.length === 0) {
-          return res.json({ loggedIn: false });
-        }
-        res.json({ loggedIn: true, username: result.rows[0].username });
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: req.session.userId }
       });
-    } else {
-      const db = readLocalDb();
-      const user = db.users.find(u => u.id === req.session.userId);
-      if (!user) return res.json({ loggedIn: false });
+      if (!user) {
+        return res.json({ loggedIn: false });
+      }
       res.json({ loggedIn: true, username: user.username });
+    } catch (err) {
+      console.error('Session check failed:', err);
+      res.json({ loggedIn: false });
     }
   } else {
     res.json({ loggedIn: false });
@@ -128,95 +51,65 @@ app.get('/api/me', (req, res) => {
 });
 
 // 2. Signup
-app.post('/api/signup', (req, res) => {
+app.post('/api/signup', async (req, res) => {
   const { username, authHash } = req.body;
 
   if (!username || !authHash) {
     return res.status(400).json({ error: 'Username and auth credentials required' });
   }
 
-  bcrypt.hash(authHash, 10, (err, hash) => {
-    if (err) {
-      return res.status(500).json({ error: 'Internal server error during hashing' });
+  try {
+    const existingUser = await prisma.user.findUnique({
+      where: { username }
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ error: 'Username already exists' });
     }
 
-    if (usePostgres) {
-      pgPool.query(
-        'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id',
-        [username, hash],
-        (err, result) => {
-          if (err) {
-            if (err.message.includes('unique constraint') || err.message.includes('duplicate key')) {
-              return res.status(400).json({ error: 'Username already exists' });
-            }
-            return res.status(500).json({ error: 'Database error registering user' });
-          }
-          req.session.userId = result.rows[0].id;
-          res.json({ success: true, username });
-        }
-      );
-    } else {
-      const db = readLocalDb();
-      const existingUser = db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
-      if (existingUser) {
-        return res.status(400).json({ error: 'Username already exists' });
-      }
-
-      const newUser = {
-        id: db.users.length + 1,
+    const hash = await bcrypt.hash(authHash, 10);
+    const newUser = await prisma.user.create({
+      data: {
         username: username,
         password_hash: hash
-      };
+      }
+    });
 
-      db.users.push(newUser);
-      writeLocalDb(db);
-
-      req.session.userId = newUser.id;
-      res.json({ success: true, username });
-    }
-  });
+    req.session.userId = newUser.id;
+    res.json({ success: true, username });
+  } catch (err) {
+    console.error('Signup error:', err);
+    res.status(500).json({ error: 'Database error registering user' });
+  }
 });
 
 // 3. Login
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { username, authHash } = req.body;
 
   if (!username || !authHash) {
     return res.status(400).json({ error: 'Username and credentials required' });
   }
 
-  if (usePostgres) {
-    pgPool.query('SELECT id, password_hash FROM users WHERE username = $1', [username], (err, result) => {
-      if (err || result.rows.length === 0) {
-        return res.status(400).json({ error: 'Invalid username or password' });
-      }
-
-      const user = result.rows[0];
-      bcrypt.compare(authHash, user.password_hash, (err, matches) => {
-        if (err || !matches) {
-          return res.status(400).json({ error: 'Invalid username or password' });
-        }
-
-        req.session.userId = user.id;
-        res.json({ success: true, username });
-      });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { username }
     });
-  } else {
-    const db = readLocalDb();
-    const user = db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
-    
+
     if (!user) {
       return res.status(400).json({ error: 'Invalid username or password' });
     }
 
-    bcrypt.compare(authHash, user.password_hash, (err, matches) => {
-      if (err || !matches) {
-        return res.status(400).json({ error: 'Invalid username or password' });
-      }
+    const matches = await bcrypt.compare(authHash, user.password_hash);
+    if (!matches) {
+      return res.status(400).json({ error: 'Invalid username or password' });
+    }
 
-      req.session.userId = user.id;
-      res.json({ success: true, username });
-    });
+    req.session.userId = user.id;
+    res.json({ success: true, username });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Database error during login' });
   }
 });
 
@@ -227,62 +120,40 @@ app.post('/api/logout', (req, res) => {
 });
 
 // 5. Save Encrypted Idea
-app.post('/api/ideas', requireAuth, (req, res) => {
+app.post('/api/ideas', requireAuth, async (req, res) => {
   const { encrypted_payload, iv, salt } = req.body;
 
   if (!encrypted_payload || !iv || !salt) {
     return res.status(400).json({ error: 'Encrypted payload, iv, and salt are required' });
   }
 
-  if (usePostgres) {
-    pgPool.query(
-      'INSERT INTO ideas (user_id, encrypted_payload, iv, salt) VALUES ($1, $2, $3, $4) RETURNING id',
-      [req.session.userId, encrypted_payload, iv, salt],
-      (err, result) => {
-        if (err) {
-          return res.status(500).json({ error: 'Failed to save encrypted idea' });
-        }
-        res.json({ success: true, id: result.rows[0].id });
+  try {
+    const newIdea = await prisma.idea.create({
+      data: {
+        user_id: req.session.userId,
+        encrypted_payload,
+        iv,
+        salt
       }
-    );
-  } else {
-    const db = readLocalDb();
-    const newIdea = {
-      id: db.ideas.length + 1,
-      user_id: req.session.userId,
-      encrypted_payload: encrypted_payload,
-      iv: iv,
-      salt: salt,
-      created_at: new Date().toISOString()
-    };
-
-    db.ideas.push(newIdea);
-    writeLocalDb(db);
-
+    });
     res.json({ success: true, id: newIdea.id });
+  } catch (err) {
+    console.error('Save idea error:', err);
+    res.status(500).json({ error: 'Failed to save encrypted idea' });
   }
 });
 
 // 6. Fetch Encrypted Ideas for logged-in user
-app.get('/api/ideas', requireAuth, (req, res) => {
-  if (usePostgres) {
-    pgPool.query(
-      'SELECT id, encrypted_payload, iv, salt, created_at FROM ideas WHERE user_id = $1 ORDER BY created_at DESC',
-      [req.session.userId],
-      (err, result) => {
-        if (err) {
-          return res.status(500).json({ error: 'Failed to fetch encrypted ideas' });
-        }
-        res.json(result.rows);
-      }
-    );
-  } else {
-    const db = readLocalDb();
-    const userIdeas = db.ideas
-      .filter(i => i.user_id === req.session.userId)
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-      
+app.get('/api/ideas', requireAuth, async (req, res) => {
+  try {
+    const userIdeas = await prisma.idea.findMany({
+      where: { user_id: req.session.userId },
+      orderBy: { created_at: 'desc' }
+    });
     res.json(userIdeas);
+  } catch (err) {
+    console.error('Fetch ideas error:', err);
+    res.status(500).json({ error: 'Failed to fetch encrypted ideas' });
   }
 });
 
@@ -292,16 +163,8 @@ app.get('/admin/db', async (req, res) => {
   let ideas = [];
 
   try {
-    if (usePostgres) {
-      const usersRes = await pgPool.query('SELECT id, username, password_hash FROM users');
-      const ideasRes = await pgPool.query('SELECT id, user_id, encrypted_payload, iv, salt, created_at FROM ideas');
-      users = usersRes.rows;
-      ideas = ideasRes.rows;
-    } else {
-      const db = readLocalDb();
-      users = db.users || [];
-      ideas = db.ideas || [];
-    }
+    users = await prisma.user.findMany() || [];
+    ideas = await prisma.idea.findMany() || [];
   } catch (err) {
     console.error('Error fetching inspector records:', err);
   }
@@ -331,7 +194,7 @@ app.get('/admin/db', async (req, res) => {
     </head>
     <body>
       <a href="/" class="nav-link">← Back to Simulator</a>
-      <h1>Zero-Knowledge Database Inspector (${usePostgres ? 'Cloud Postgres Mode' : 'Local File Mode'})</h1>
+      <h1>Zero-Knowledge Database Inspector (Prisma Mode)</h1>
       <p>This panel displays the raw database records stored on the server. Notice that all user passwords and startup ideas are fully encrypted/hashed before they hit the database.</p>
       
       <div class="table-container">
